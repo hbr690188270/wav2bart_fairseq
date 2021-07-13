@@ -37,6 +37,9 @@ from fairseq.modules import LayerNorm, PositionalEmbedding, TransformerDecoderLa
 from typing import Optional, Any
 from argparse import Namespace
 from fairseq import checkpoint_utils, tasks, utils
+import os
+from fairseq.models.transformer import TransformerDecoder
+
 
 @dataclass
 class Wav2BartConfig(FairseqDataclass):
@@ -181,13 +184,21 @@ class Wav2Bart(FairseqEncoderDecoderModel):
         '''
         return: fairseq.models.TransformerDecoder
         '''
-        bart = BARTModel.from_pretrained('/data/private/houbairu/model_cache/bart_model/bart.base/', checkpoint_file='model.pt')
-        bart_model = bart.model.decoder
+        # bart = BARTModel.from_pretrained('/data/private/houbairu/model_cache/bart_model/bart.base/', checkpoint_file='model.pt')
+        # bart_model = bart.model.decoder
+        # if cfg.fix_decoder:
+        #     print("fix w2v decoder")
+        #     for parameter in bart_model.parameters():
+        #         parameter.requires_grad = False
+        # return bart_model
+        decoder = BartDecoder(cfg)
         if cfg.fix_decoder:
-            print("fix w2v decoder")
-            for parameter in bart_model.parameters():
+            for n, parameter in decoder.named_parameters():
+                if 'decoder.embed_positions' in n or 'decoder.embed_tokens' in n:
+                    continue
                 parameter.requires_grad = False
-        return bart_model
+
+        return decoder
 
 
     # def get_normalized_probs(
@@ -223,7 +234,8 @@ class Wav2Bart(FairseqEncoderDecoderModel):
 
     def forward(self, **kwargs):
         encoder_out = self.encoder(tbc=True, **kwargs)
-        decoder_out = self.decoder(encoder_out=encoder_out, prev_output_tokens = kwargs['prev_output_tokens'])
+        # decoder_out = self.decoder(encoder_out=encoder_out, prev_output_tokens = kwargs['prev_output_tokens'])
+        decoder_out = self.decoder(encoder_out=encoder_out, **kwargs)
         return decoder_out
 
     # def forward(self, **param_dict):
@@ -365,6 +377,81 @@ class Wav2VecEncoder(FairseqEncoder):
 
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
+
+class BartDecoder(FairseqIncrementalDecoder):
+    """
+    Transformer decoder consisting of *args.decoder_layers* layers. Each layer
+    is a :class:`TransformerDecoderLayer`.
+
+    Args:
+        args (argparse.Namespace): parsed command-line arguments
+        dictionary (~fairseq.data.Dictionary): decoding dictionary
+        embed_tokens (torch.nn.Embedding): output embedding
+        no_encoder_attn (bool, optional): whether to attend to encoder outputs
+            (default: False).
+    """
+
+    def __init__(
+        self,
+        cfg: Wav2BartConfig,
+        dictionary=None,
+        embed_tokens=None,
+        no_encoder_attn=False,
+    ):
+        super().__init__(dictionary)
+        self.cfg = cfg
+        # bart = torch.hub.load('pytorch/fairseq', 'bart.base')
+        from fairseq.models.bart import BARTModel
+        if os.path.isfile(os.path.join(cfg.bart_path, 'model.pt')):
+            print('loading bart from cfg path')
+            bart = BARTModel.from_pretrained(cfg.bart_path, checkpoint_file='model.pt')
+        else:
+            print('loading bart from relative path')
+            bart = BARTModel.from_pretrained('models/bart.base', checkpoint_file='model.pt')
+        
+        bart_decoder = bart.model.decoder
+        self.decoder = TransformerDecoder(bart_decoder.args, bart_decoder.dictionary, bart_decoder.embed_tokens)
+        self.decoder.load_state_dict(bart_decoder.state_dict())
+
+    def forward(
+        self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
+    ):
+        """
+        Args:
+            prev_output_tokens (LongTensor): previous decoder outputs of shape
+                `(batch, tgt_len)`, for teacher forcing
+            encoder_out (Tensor, optional): output from the encoder, used for
+                encoder-side attention
+            incremental_state (dict): dictionary used for storing state during
+                :ref:`Incremental decoding`
+
+        Returns:
+            tuple:
+                - the decoder's output of shape `(batch, tgt_len, vocab)`
+                - a dictionary with any model-specific outputs
+        """
+        # with torch.no_grad() if self.cfg.fix_decoder else contextlib.ExitStack():
+        x, extra = self.decoder(prev_output_tokens, encoder_out, incremental_state)
+
+        return x, extra
+
+    def extract_features(
+        self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
+    ):
+        self.decoder.extract_features(prev_output_tokens, encoder_out, incremental_state)
+
+    def max_positions(self):
+        """Maximum output length supported by the decoder."""
+        return self.decoder.max_positions()
+
+    def buffered_future_mask(self, tensor):
+        
+        return self.decoder.buffered_future_mask
+
+    def upgrade_state_dict_named(self, state_dict, name):
+        return state_dict
+
+
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)

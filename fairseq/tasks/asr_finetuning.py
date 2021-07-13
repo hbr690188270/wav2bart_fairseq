@@ -30,8 +30,8 @@ from .. import utils
 from ..logging import metrics
 
 import pickle
-from fairseq.data.encoders import gpt2_bpe
 import numpy as np
+from fairseq.models.bart import BARTModel
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +103,6 @@ class ASRFinetuningConfig(FairseqDataclass):
     debug: bool = field(
         default=False,
     )
-    tgt_dict_path: str = field(
-        default="",
-        metadata={"help": "path of bart model"},
-    )
 
     bart_path: str = field(
         default="",
@@ -123,15 +119,13 @@ class ASRFinetunig(FairseqTask):
         if cfg.eval_wer:
             assert cfg.labels is not None, "eval_wer can only be set during fine-tuning"
         self.blank_symbol = "<s>"
-        # print(cfg)
-        # print(cfg.tgt_dict_path)
-        tgt_dict = self.load_target_dictionary(cfg)
-        assert tgt_dict is not None, "tgt dict is None!"
-        self.bpe = self.load_bpe()
-        self.state.merge_state_dict({'target_dictionary': tgt_dict})
-
+        print(cfg)
+        print(cfg.bart_path)
+        self.bart = BARTModel.from_pretrained(cfg.bart_path, checkpoint_file='model.pt')
+        self.state.merge_state_dict({'target_dictionary': self.bart.task.target_dictionary})
+        
         ## Note: max length设定为512
-        self.text_max_length = [512]
+        # self.text_max_length = [512]
 
     @property
     def max_positions(self):
@@ -155,15 +149,11 @@ class ASRFinetunig(FairseqTask):
             return tgt_dict
         return None
 
-    def load_bpe(self,):   
-        bpe_tokenizer = gpt2_bpe.GPT2BPE(gpt2_bpe.GPT2BPEConfig())
-        return bpe_tokenizer
     
     def encode(self, sentence):
-        ## TODO: 检查加special token的情况
-        tokens = self.bpe.encode(sentence)
-        if len(tokens.split(" ")) > min(self.text_max_length) - 2:
-            tokens = " ".join(tokens.split(" ")[: min(self.text_max_length) - 2])
+        tokens = self.bart.bpe.encode(sentence)
+        if len(tokens.split(" ")) > min(self.bart.max_positions) - 2:
+            tokens = " ".join(tokens.split(" ")[: min(self.bart.max_positions) - 2])
         bpe_sentence = "<s> " + tokens + " </s>"
         return bpe_sentence
 
@@ -176,9 +166,7 @@ class ASRFinetunig(FairseqTask):
             if not hasattr(task_cfg, "autoregressive"):
                 task_cfg.autoregressive = not task_cfg.criterion == "ctc"
 
-
         manifest_path = os.path.join(data_path, "{}.tsv".format(split))
-
         self.datasets[split] = FileAudioDataset(
             manifest_path=manifest_path,
             sample_rate=task_cfg.get("sample_rate", self.cfg.sample_rate),
