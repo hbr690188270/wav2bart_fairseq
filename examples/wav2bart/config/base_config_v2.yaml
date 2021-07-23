@@ -8,12 +8,18 @@ common:
 checkpoint:
   save_interval: 1000
   save_interval_updates: 500
+  # save_interval: 100
+  # save_interval_updates: 100
   keep_interval_updates: 1
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
+  save_dir: /data/bairu/repos/wav2bart_fairseq/outputs/2021-07-14/04-06-14/checkpoints
+  restore_file: checkpoint_last.pt
+  reset_dataloader: true
 
 task:
-  _name: asr_finetuning
+  _name: asr_finetuning_v3
+  # 原本为v2，尝试删去next继续训练
   data: ???
   normalize: false
   labels: ltr
@@ -27,8 +33,9 @@ dataset:
   max_tokens: 2400000
   skip_invalid_size_inputs_valid_test: true
   validate_after_updates: 10000
-  validate_interval: 1000
+  validate_interval: 2000
   valid_subset: dev_other
+  # valid_subset: train_dev
 
 distributed_training:
   ddp_backend: legacy_ddp
@@ -63,6 +70,6 @@ model:
   layerdrop: 0.1
   activation_dropout: 0.1
   feature_grad_mult: 0.0
-  freeze_finetune_updates: 100000
+  freeze_finetune_updates: 10000
   bart_path: ???
   fix_encoder: false

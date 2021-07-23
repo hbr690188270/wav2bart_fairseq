@@ -16,7 +16,6 @@ from typing import Optional, Any
 from omegaconf import MISSING, II, OmegaConf
 
 from fairseq.data import (
-    AddTargetDataset,
     BinarizedAudioDataset,
     Dictionary,
     FileAudioDataset,
@@ -24,6 +23,7 @@ from fairseq.data import (
 )
 from fairseq.dataclass import FairseqDataclass
 from fairseq.dataclass.configs import GenerationConfig
+from fairseq.data import AddTargetDatasetBart as AddTargetDataset
 
 from . import FairseqTask, register_task
 from .. import utils
@@ -108,9 +108,12 @@ class ASRFinetuningConfig(FairseqDataclass):
         default="",
         metadata={"help": "path of bart model"},
     )
+'''
+v2: tokenizer和heting的代码保持一致
+'''
 
-@register_task("asr_finetuning", dataclass=ASRFinetuningConfig)
-class ASRFinetunig(FairseqTask):
+@register_task("asr_finetuning_v3", dataclass=ASRFinetuningConfig)
+class ASRFinetunig_v3(FairseqTask):
     def __init__(
         self,
         cfg: ASRFinetuningConfig,
@@ -124,13 +127,6 @@ class ASRFinetunig(FairseqTask):
         self.bart = BARTModel.from_pretrained(cfg.bart_path, checkpoint_file='model.pt')
         self.state.merge_state_dict({'target_dictionary': self.bart.task.target_dictionary})
         
-        ## Note: max length设定为512
-        # self.text_max_length = [512]
-
-    @property
-    def max_positions(self):
-        return [512]
-
     @classmethod
     def setup_task(cls, cfg: ASRFinetuningConfig, **kwargs):
         """Setup the task (e.g., load dictionaries).
@@ -141,21 +137,22 @@ class ASRFinetunig(FairseqTask):
 
         return cls(cfg)
 
-    # def load_target_dictionary(self, cfg):
-    #     if cfg.tgt_dict_path:
-    #         print(cfg.tgt_dict_path)
-    #         with open(cfg.tgt_dict_path, 'rb') as f:
-    #             tgt_dict = pickle.load(f)
-    #         return tgt_dict
-    #     return None
+    def load_target_dictionary(self):
+        if self.cfg.labels:
+            dict_path = os.path.join(self.cfg.data, f"dict.{self.cfg.labels}.txt")
+            return Dictionary.load(dict_path)
+        return None
 
     
     def encode(self, sentence):
         tokens = self.bart.bpe.encode(sentence)
+        tokens = ' '.join(tokens.split()[:-1])
+        # if tokens[-1] == 220:
+            # print(tokens)
+            # tokens = tokens[:-1]
         if len(tokens.split(" ")) > min(self.bart.max_positions) - 2:
             tokens = " ".join(tokens.split(" ")[: min(self.bart.max_positions) - 2])
-        # bpe_sentence = "<s> " + tokens + " </s>"
-        bpe_sentence = tokens
+        bpe_sentence = "<s> " + tokens + " </s>"
         return bpe_sentence
         
     def load_dataset(self, split: str, task_cfg: FairseqDataclass = None, **kwargs):
@@ -204,52 +201,6 @@ class ASRFinetunig(FairseqTask):
                 add_to_input=task_cfg.get('autoregressive', False),
             )
 
-    # def load_dataset(self, split: str, task_cfg: FairseqDataclass = None, **kwargs):
-    #     data_path = self.cfg.data
-    #     task_cfg = task_cfg or self.cfg
-
-    #     # upgrade old task
-    #     if isinstance(task_cfg, Namespace):
-    #         if not hasattr(task_cfg, "autoregressive"):
-    #             task_cfg.autoregressive = not task_cfg.criterion == "ctc"
-
-    #     manifest_path = os.path.join(data_path, "{}.tsv".format(split))
-    #     self.datasets[split] = FileAudioDataset(
-    #         manifest_path=manifest_path,
-    #         sample_rate=task_cfg.get("sample_rate", self.cfg.sample_rate),
-    #         max_sample_size=self.cfg.max_sample_size,
-    #         min_sample_size=self.cfg.min_sample_size,
-    #         pad=task_cfg.labels is not None or task_cfg.enable_padding,
-    #         normalize=task_cfg.normalize,
-    #     )
-
-    #     if task_cfg.labels:
-    #         label_path = os.path.join(data_path, f"{split}.{task_cfg.labels}")
-    #         skipped_indices = getattr(self.datasets[split], "skipped_indices", set())
-    #         with open(label_path, "r") as f:
-    #             labels = [
-    #                 self.encode(
-    #                     ''.join(line.strip().split()).lower().replace("|"," ")
-    #                     )
-    #                 for i, line in enumerate(f)
-    #                 if i not in skipped_indices
-    #             ]
-    #         assert len(labels) == len(self.datasets[split]), (
-    #                 f"labels length ({len(labels)}) and dataset length "
-    #                 f"({len(self.datasets[split])}) do not match")
-
-    #         process_label = LabelEncoder(self.target_dictionary)
-
-    #         self.datasets[split] = AddTargetDataset(
-    #             self.datasets[split],
-    #             labels,
-    #             pad=self.target_dictionary.pad(),
-    #             eos=self.target_dictionary.eos(),
-    #             batch_targets=True,
-    #             process_label=process_label,
-    #             add_to_input=task_cfg.get("autoregressive", False),
-    #         )
-
     @property
     def source_dictionary(self):
         return None
@@ -276,6 +227,7 @@ class ASRFinetunig(FairseqTask):
 
     def valid_step(self, sample, model, criterion):
         loss, sample_size, logging_output = super().valid_step(sample, model, criterion)
+
         if self.cfg.eval_wer and self.cfg.autoregressive:
             metrics = self._inference_with_wer(self.sequence_generator, sample, model)
             logging_output["_num_char_errors"] = metrics["num_char_errors"]
@@ -296,7 +248,6 @@ class ASRFinetunig(FairseqTask):
                 self.tokenizer = encoders.build_tokenizer(self.cfg.eval_wer_tokenizer)
             else:
                 self.tokenizer = None
-        print("decoder max length: ", model.max_decoder_positions(), model.max_positions())
         return model
 
     def _inference_with_wer(self, generator, sample, model):
@@ -314,6 +265,8 @@ class ASRFinetunig(FairseqTask):
             ref = decode(
                 utils.strip_pad(sample["target"][i], self.target_dictionary.pad()),
             )
+            # print(gen_out[i][0]["tokens"])
+            # print(sample["target"][i])
             print('test', hyp, ref)
             num_char_errors += editdistance.eval(hyp, ref)
             num_chars += len(ref)

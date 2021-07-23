@@ -11,6 +11,8 @@ checkpoint:
   keep_interval_updates: 1
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
+  save_dir: /data/bairu/repos/wav2bart_fairseq/outputs/2021-07-14/04-06-14/checkpoints
+  restore_file: checkpoint_last.pt
 
 task:
   _name: asr_finetuning
