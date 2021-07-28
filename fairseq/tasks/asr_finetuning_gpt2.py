@@ -130,7 +130,7 @@ class ASRFinetunig_gpt(FairseqTask):
         from transformers import GPT2Tokenizer, GPT2Config
         self.gpt_tokenizer = GPT2Tokenizer.from_pretrained(model_type = cfg.gpt_type, cache_dir = cfg.gpt_path)
         self.gpt_config = GPT2Config.from_pretrained(cfg.gpt_type, cache_dir = cfg.gpt_path)
-        self.state.merge_state_dict({'target_dictionary': self.gpt.task.target_dictionary})
+        self.state.merge_state_dict({'target_dictionary': self.gpt_tokenizer.encoder})
         
     @classmethod
     def setup_task(cls, cfg: ASRFinetuningConfig, **kwargs):
@@ -142,11 +142,11 @@ class ASRFinetunig_gpt(FairseqTask):
 
         return cls(cfg)
 
-    def load_target_dictionary(self):
-        if self.cfg.labels:
-            dict_path = os.path.join(self.cfg.data, f"dict.{self.cfg.labels}.txt")
-            return Dictionary.load(dict_path)
-        return None
+    # def load_target_dictionary(self):
+    #     if self.cfg.labels:
+    #         dict_path = os.path.join(self.cfg.data, f"dict.{self.cfg.labels}.txt")
+    #         return Dictionary.load(dict_path)
+    #     return None
 
     
     def encode(self, sentence):
@@ -214,7 +214,7 @@ class ASRFinetunig_gpt(FairseqTask):
     def target_dictionary(self):
         """Return the :class:`~fairseq.data.Dictionary` for the language
         model."""
-        return self.state.target_dictionary
+        return self.gpt_tokenizer
 
     def max_positions(self):
         """Maximum input length supported by the encoder."""
@@ -259,7 +259,7 @@ class ASRFinetunig_gpt(FairseqTask):
         import editdistance
 
         def decode(toks):
-            s = self.gpt.decode(toks.int().cpu())
+            s = self.gpt_tokenizer.decode(toks.detach().cpu().int().numpy())
             return s
 
         num_word_errors, num_char_errors = 0, 0
@@ -268,7 +268,7 @@ class ASRFinetunig_gpt(FairseqTask):
         for i in range(len(gen_out)):
             hyp = decode(gen_out[i][0]["tokens"])
             ref = decode(
-                utils.strip_pad(sample["target"][i], self.target_dictionary.pad()),
+                utils.strip_pad(sample["target"][i], self.target_dictionary.pad_token_id),
             )
             # print(gen_out[i][0]["tokens"])
             # print(sample["target"][i])
