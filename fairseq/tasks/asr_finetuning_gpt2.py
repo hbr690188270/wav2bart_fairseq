@@ -109,6 +109,11 @@ class ASRFinetuningConfig(FairseqDataclass):
         metadata={"help": "path of bart model"},
     )
 
+    gpt_type: str = field(
+        default="gpt2",
+        metadata={"help": "path of bart model"},
+    )
+
 @register_task("asr_finetuning_gpt", dataclass=ASRFinetuningConfig)
 class ASRFinetunig_gpt(FairseqTask):
     def __init__(
@@ -121,7 +126,10 @@ class ASRFinetunig_gpt(FairseqTask):
         self.blank_symbol = "<s>"
         print(cfg)
         print(cfg.gpt_path)
-        self.gpt = TransformerLanguageModel.from_pretrained(cfg.gpt_path, checkpoint_file='model.pt',tokenizer='moses', bpe='fastbpe')
+        
+        from transformers import GPT2Tokenizer, GPT2Config
+        self.gpt_tokenizer = GPT2Tokenizer.from_pretrained(model_type = cfg.gpt_type, cache_dir = cfg.gpt_path)
+        self.gpt_config = GPT2Config.from_pretrained(cfg.gpt_type, cache_dir = cfg.gpt_path)
         self.state.merge_state_dict({'target_dictionary': self.gpt.task.target_dictionary})
         
     @classmethod
@@ -142,15 +150,14 @@ class ASRFinetunig_gpt(FairseqTask):
 
     
     def encode(self, sentence):
-        # print(self.gpt.bpe)
-        tokens = self.gpt.bpe.encode(sentence)
+        tokens = self.gpt_tokenizer.tokenize(sentence)
         # tokens = ' '.join(tokens.split()[:-1])
         # # if tokens[-1] == 220:
         #     # print(tokens)
         #     # tokens = tokens[:-1]
-        if len(tokens.split(" ")) > self.gpt.max_positions - 2:
-            tokens = " ".join(tokens.split(" ")[: self.gpt.max_positions - 2])
-        bpe_sentence = "<s> " + tokens + " </s>"
+        if len(tokens.split(" ")) > self.gpt_config.max_position_embeddings - 2:
+            tokens = " ".join(tokens.split(" ")[: self.gpt_config.max_position_embeddings - 2])
+        bpe_sentence = self.gpt_tokenizer.bos_token + " " + tokens + " " + self.gpt_tokenizer.eos_token
         return bpe_sentence
         
     def load_dataset(self, split: str, task_cfg: FairseqDataclass = None, **kwargs):
