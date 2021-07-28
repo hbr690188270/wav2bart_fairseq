@@ -109,8 +109,8 @@ class ASRFinetuningConfig(FairseqDataclass):
         metadata={"help": "path of bart model"},
     )
 
-@register_task("asr_finetuning_gpt", dataclass=ASRFinetuningConfig)
-class ASRFinetunig_gpt(FairseqTask):
+@register_task("asr_finetuning_lm", dataclass=ASRFinetuningConfig)
+class ASRFinetunig_lm(FairseqTask):
     def __init__(
         self,
         cfg: ASRFinetuningConfig,
@@ -124,6 +124,7 @@ class ASRFinetunig_gpt(FairseqTask):
         self.gpt = TransformerLanguageModel.from_pretrained(cfg.gpt_path, checkpoint_file='model.pt',tokenizer='moses', bpe='fastbpe')
         self.state.merge_state_dict({'target_dictionary': self.gpt.task.target_dictionary})
         
+
     @classmethod
     def setup_task(cls, cfg: ASRFinetuningConfig, **kwargs):
         """Setup the task (e.g., load dictionaries).

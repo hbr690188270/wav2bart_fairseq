@@ -29,7 +29,7 @@ task:
 
 dataset:
   num_workers: 6
-  max_tokens: 960000
+  max_tokens: 1920000
   skip_invalid_size_inputs_valid_test: true
   validate_after_updates: 10000
   validate_interval: 2000
@@ -48,7 +48,7 @@ optimization:
   max_update: 100000
   lr: [0.00002]
   sentence_avg: true
-  update_freq: [10]
+  update_freq: [5]
 
 optimizer:
   _name: adam
@@ -73,3 +73,4 @@ model:
   freeze_finetune_updates: 10000
   gpt_path: ???
   fix_encoder: false
+  fix_decoder: true
