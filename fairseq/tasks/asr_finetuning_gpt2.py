@@ -41,8 +41,8 @@ class LabelEncoder(object):
         self.dictionary = dictionary
 
     def __call__(self, label):
-        return self.dictionary.encode_line(
-            label, append_eos=False, add_if_not_exist=False
+        return self.dictionary.convert_tokens_to_ids(
+            label.split()
         )
 
 
@@ -130,7 +130,8 @@ class ASRFinetunig_gpt(FairseqTask):
         from transformers import GPT2Tokenizer, GPT2Config
         self.gpt_tokenizer = GPT2Tokenizer.from_pretrained(model_type = cfg.gpt_type, cache_dir = cfg.gpt_path)
         self.gpt_config = GPT2Config.from_pretrained(cfg.gpt_type, cache_dir = cfg.gpt_path)
-        self.state.merge_state_dict({'target_dictionary': self.gpt_tokenizer.encoder})
+        dummpy_tgt_dict = self.load_target_dictionary()
+        self.state.merge_state_dict({'target_dictionary': dummpy_tgt_dict})
         
     @classmethod
     def setup_task(cls, cfg: ASRFinetuningConfig, **kwargs):
@@ -142,12 +143,10 @@ class ASRFinetunig_gpt(FairseqTask):
 
         return cls(cfg)
 
-    # def load_target_dictionary(self):
-    #     if self.cfg.labels:
-    #         dict_path = os.path.join(self.cfg.data, f"dict.{self.cfg.labels}.txt")
-    #         return Dictionary.load(dict_path)
-    #     return None
-
+    def load_target_dictionary(self):
+        tgt_dict = Dictionary(eos = '<|endoftext|>')
+        tgt_dict.indices['<|endoftext|>'] = 50256
+        return tgt_dict
     
     def encode(self, sentence):
         tokens = self.gpt_tokenizer.tokenize(sentence)
@@ -194,7 +193,7 @@ class ASRFinetunig_gpt(FairseqTask):
                     f"labels length ({len(labels)}) and dataset length "
                     f"({len(self.datasets[split])}) do not match")
 
-            process_label = LabelEncoder(self.target_dictionary)
+            process_label = LabelEncoder(self.gpt_tokenizer)
 
             self.datasets[split] = AddTargetDataset(
                 self.datasets[split],
