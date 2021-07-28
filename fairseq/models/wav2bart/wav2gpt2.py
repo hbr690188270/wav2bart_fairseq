@@ -329,8 +329,9 @@ class Wav2VecEncoder(FairseqEncoder):
         return state_dict
 
 
-class GPTDecoder(nn.Module):
-    def __init__(self, cfg: Wav2GPTConfig, ):
+class GPTDecoder(FairseqIncrementalDecoder):
+    def __init__(self, cfg: Wav2GPTConfig, dictionary = None):
+        super().__init__(dictionary)
         gpt_path = cfg.gpt_path
         gpt_type = cfg.gpt_type
 
@@ -348,7 +349,8 @@ class GPTDecoder(nn.Module):
         print(unexpected_keys)
         self.decoder = gpt_lm
 
-        self.pad_idx = config.pad_token_id
+        ## mannually controled, defined in asr_finetuning_gpt2.py
+        self.pad_idx = 2
 
 
     def forward(
@@ -385,6 +387,7 @@ class GPTDecoder(nn.Module):
         encoder_attention_mask = encoder_out['encoder_padding_mask'][0]
         transformer_outputs = self.decoder.transformer(
                                  input_ids = prev_output_tokens, 
+                                 attention_mask = attention_mask,
                                  encoder_hidden_states = encoder_hidden_states, 
                                  encoder_attention_mask = encoder_attention_mask, 
                                  position_ids=position_ids,

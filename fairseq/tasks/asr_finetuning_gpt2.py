@@ -128,9 +128,9 @@ class ASRFinetunig_gpt(FairseqTask):
         print(cfg.gpt_path)
         
         from transformers import GPT2Tokenizer, GPT2Config
-        self.gpt_tokenizer = GPT2Tokenizer.from_pretrained(model_type = cfg.gpt_type, cache_dir = cfg.gpt_path)
-        self.gpt_config = GPT2Config.from_pretrained(cfg.gpt_type, cache_dir = cfg.gpt_path)
-        dummpy_tgt_dict = self.load_target_dictionary()
+        self.gpt_tokenizer = GPT2Tokenizer.from_pretrained(pretrained_model_name_or_path = cfg.gpt_type, cache_dir = cfg.gpt_path)
+        self.gpt_config = GPT2Config.from_pretrained(pretrained_model_name_or_path = cfg.gpt_type, cache_dir = cfg.gpt_path)
+        dummpy_tgt_dict = self.load_target_dictionary(vocab_path = cfg.gpt_path)
         self.state.merge_state_dict({'target_dictionary': dummpy_tgt_dict})
         
     @classmethod
@@ -143,9 +143,27 @@ class ASRFinetunig_gpt(FairseqTask):
 
         return cls(cfg)
 
-    def load_target_dictionary(self):
-        tgt_dict = Dictionary(eos = '<|endoftext|>')
-        tgt_dict.indices['<|endoftext|>'] = 50256
+    def load_target_dictionary(self, vocab_path):
+        import json
+        with open(vocab_path + 'vocab.json') as f:
+            word2idx = json.load(f)
+        idx2word = {v:k for k,v in word2idx.items()}
+        tgt_dict = Dictionary()
+
+        ## clear the pre-defined special symbols in fairseq
+        tgt_dict.symbols = []
+        tgt_dict.count = []
+        tgt_dict.indices = {}
+        ## add the words according to their idx
+        for idx in range(len(idx2word)):
+            tgt_dict.add_symbol(idx2word[idx])
+        assert tgt_dict.indices == word2idx, "error when initializing word2index dict!"
+
+        ## define the special tokens
+        tgt_dict.bos_index = 1
+        tgt_dict.pad_index = 2
+        tgt_dict.unk_index = 3
+        tgt_dict.eos_index = 50256
         return tgt_dict
     
     def encode(self, sentence):
@@ -154,9 +172,11 @@ class ASRFinetunig_gpt(FairseqTask):
         # # if tokens[-1] == 220:
         #     # print(tokens)
         #     # tokens = tokens[:-1]
-        if len(tokens.split(" ")) > self.gpt_config.max_position_embeddings - 2:
-            tokens = " ".join(tokens.split(" ")[: self.gpt_config.max_position_embeddings - 2])
-        bpe_sentence = self.gpt_tokenizer.bos_token + " " + tokens + " " + self.gpt_tokenizer.eos_token
+
+        ## only append [EOS]
+        if len(tokens.split(" ")) > self.gpt_config.max_position_embeddings - 1:
+            tokens = " ".join(tokens.split(" ")[: self.gpt_config.max_position_embeddings - 1])
+        bpe_sentence = tokens + " " + self.gpt_tokenizer.eos_token
         return bpe_sentence
         
     def load_dataset(self, split: str, task_cfg: FairseqDataclass = None, **kwargs):

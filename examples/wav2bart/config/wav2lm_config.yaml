@@ -13,7 +13,7 @@ checkpoint:
   keep_interval_updates: 1
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
-
+  
 task:
   _name: asr_finetuning_gpt
   data: ???
@@ -28,7 +28,7 @@ dataset:
   num_workers: 6
   max_tokens: 1920000
   skip_invalid_size_inputs_valid_test: true
-  validate_after_updates: 1000
+  validate_after_updates: 10000
   validate_interval: 2000
   # validate_interval: 200
   valid_subset: dev_other
@@ -67,7 +67,7 @@ model:
   layerdrop: 0.1
   activation_dropout: 0.1
   feature_grad_mult: 0.0
-  freeze_finetune_updates: 100000
+  freeze_finetune_updates: 10000
   gpt_path: ???
   fix_encoder: false
-  fix_decoder: false
+  fix_decoder: true
