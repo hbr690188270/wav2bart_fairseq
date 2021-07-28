@@ -1,3 +1,4 @@
+from fairseq.models.fairseq_decoder import FairseqDecoder
 from json import encoder
 import pickle
 import contextlib
@@ -37,6 +38,7 @@ from fairseq import checkpoint_utils, tasks, utils
 import os
 from fairseq.models.transformer import TransformerDecoder
 
+from transformers import GPT2Tokenizer, GPT2LMHeadModel, GPT2Config
 
 @dataclass
 class Wav2GPTConfig(FairseqDataclass):
@@ -140,6 +142,10 @@ class Wav2GPTConfig(FairseqDataclass):
         default="",
         metadata={"help": "path of bart model"},
     )
+    gpt_type = field(
+        default="gpt2",
+        metadata={"help": "path of bart model"},
+    )
 
     fix_encoder: bool = False
     fix_decoder: bool = False
@@ -190,26 +196,6 @@ class Wav2GPT(FairseqEncoderDecoderModel):
 
         return decoder
 
-
-    # def get_normalized_probs(
-    #     self, 
-    #     net_output,
-    #     log_probs,
-    #     sample = None,
-    # ):
-    #     """
-    #     Get normalized probabilities (or log probs) from a net's output.
-    #     Pointer-generator network output is already normalized.
-    #     """
-    #     # probs = net_output
-    #     # Make sure the probabilities are greater than zero when returning log
-    #     # probabilities.
-    #     if log_probs:
-    #         return torch.nn.functional.log_softmax(net_output, dim = -1)
-    #     else:
-    #         return torch.nn.functional.softmax(net_output, dim = -1)
-        # return probs.clamp(1e-10, 1.0).log() if log_probs else probs
-    
     def get_targets(self, sample, net_output):
         """Get targets from either the sample or the net's output."""
         return sample["target"]
@@ -223,36 +209,10 @@ class Wav2GPT(FairseqEncoderDecoderModel):
         return self.decoder.max_positions()
 
     def forward(self, **kwargs):
-        encoder_out = self.encoder(tbc=True, **kwargs)
+        encoder_out = self.encoder(tbc=False, **kwargs)
         # decoder_out = self.decoder(encoder_out=encoder_out, prev_output_tokens = kwargs['prev_output_tokens'])
         decoder_out = self.decoder(encoder_out=encoder_out, **kwargs)
         return decoder_out
-
-    # def forward(self, **param_dict):
-    #     '''
-    #     batch_wav_input: batch_size * input_sequence_length
-    #     padding_mask: batch_size * input_sequence_length, 0/1
-    #     tgt_tokens: batch_size * target_sequence_length
-
-    #     return: batch_size * target_sequence_length * vocab_size
-    #     '''
-    #     batch_wav_input = param_dict['source'].float()
-    #     prev_output_tokens = param_dict['prev_output_tokens']
-    #     padding_mask = param_dict['padding_mask']
-    #     print(batch_wav_input.size())
-    #     print(prev_output_tokens.size())
-    #     print(padding_mask.size())
-    #     wav2vec2_output = self.encoder(source = batch_wav_input, padding_mask = padding_mask, features_only = True)
-    #     output_hidden_states = wav2vec2_output['x'].transpose(0,1)
-    #     padding_mask = wav2vec2_output['padding_mask']
-    #     # output_hidden_states = output_hidden_states.new_ones(output_hidden_states.size())
-    #     encode_output = {
-    #         'encoder_out':[output_hidden_states],
-    #         'encoder_padding_mask': [padding_mask]
-    #     }
-
-    #     bart_output, _ = self.decoder(prev_output_tokens = prev_output_tokens,encoder_out = encode_output)
-    #     return bart_output
 
 class Wav2VecEncoder(FairseqEncoder):
     def __init__(self, cfg: Wav2GPTConfig, tgt_dict=None):
@@ -368,43 +328,29 @@ class Wav2VecEncoder(FairseqEncoder):
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
 
-class GPTDecoder(FairseqIncrementalDecoder):
-    """
-    Transformer decoder consisting of *args.decoder_layers* layers. Each layer
-    is a :class:`TransformerDecoderLayer`.
 
-    Args:
-        args (argparse.Namespace): parsed command-line arguments
-        dictionary (~fairseq.data.Dictionary): decoding dictionary
-        embed_tokens (torch.nn.Embedding): output embedding
-        no_encoder_attn (bool, optional): whether to attend to encoder outputs
-            (default: False).
-    """
+class GPTDecoder(nn.Module):
+    def __init__(self, cfg: Wav2GPTConfig, ):
+        gpt_path = cfg.gpt_path
+        gpt_type = cfg.gpt_type
 
-    def __init__(
-        self,
-        cfg: Wav2GPTConfig,
-        dictionary=None,
-        embed_tokens=None,
-        no_encoder_attn=False,
-    ):
-        super().__init__(dictionary)
-        self.cfg = cfg
-        # bart = torch.hub.load('pytorch/fairseq', 'bart.base')
-        from fairseq.models.transformer_lm import TransformerLanguageModel
-        if os.path.isfile(os.path.join(cfg.gpt_path, 'model.pt')):
-            print('loading bart from cfg path')
-            gpt = TransformerLanguageModel.from_pretrained(cfg.gpt_path, checkpoint_file='model.pt',tokenizer='moses', bpe='fastbpe')
-        else:
-            print('loading bart from relative path')
-            gpt = TransformerLanguageModel.from_pretrained('models/bart.base', checkpoint_file='model.pt', tokenizer='moses', bpe='fastbpe')
-        
-        gpt_decoder = gpt.models[0].decoder
-        # self.decoder = TransformerDecoder(gpt_decoder.args, gpt_decoder.dictionary, gpt_decoder.embed_tokens)
-        # self.decoder.load_state_dict(gpt_decoder.state_dict())
-        self.decoder = gpt_decoder
-        print(self.decoder)
-        
+        config = GPT2Config.from_pretrained(gpt_type, cache_dir = gpt_path)
+        config.add_cross_attention = True
+        gpt_lm = GPT2LMHeadModel(config)
+        orig_gpt_model = GPT2LMHeadModel.from_pretrained(gpt_type, cache_dir = gpt_path)
+        # for name, param in orig_gpt_model.name_parameters():
+        #     gpt_lm_param = gpt_lm.get_parameter(name)
+        #     gpt_lm_param = param
+
+        refer_state_dict = orig_gpt_model.state_dict()
+        missing_keys, unexpected_keys = gpt_lm.load_state_dict(refer_state_dict, strict = False)
+        print(missing_keys)
+        print(unexpected_keys)
+        self.decoder = gpt_lm
+
+        self.pad_idx = config.pad_token_id
+
+
     def forward(
         self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
     ):
@@ -423,18 +369,45 @@ class GPTDecoder(FairseqIncrementalDecoder):
                 - a dictionary with any model-specific outputs
         """
         # with torch.no_grad() if self.cfg.fix_decoder else contextlib.ExitStack():
-        x, extra = self.decoder(prev_output_tokens, encoder_out, incremental_state)
+        if incremental_state:
+            past = self.get_incremental_state("past")
+        else:
+            past = None
+        
+        attention_mask = prev_output_tokens.ne(self.pad_idx).int()
+        position_ids = attention_mask * (
+            torch.arange(1, 1 + prev_output_tokens.size(1))
+            .to(prev_output_tokens)
+            .repeat(prev_output_tokens.size(0), 1)
+        )
 
-        return x, extra
+        encoder_hidden_states = encoder_out['encoder_out'][0]
+        encoder_attention_mask = encoder_out['encoder_padding_mask'][0]
+        transformer_outputs = self.decoder.transformer(
+                                 input_ids = prev_output_tokens, 
+                                 encoder_hidden_states = encoder_hidden_states, 
+                                 encoder_attention_mask = encoder_attention_mask, 
+                                 position_ids=position_ids,
+                                 past_key_values = past
+                                 )
+        hidden_states = transformer_outputs[0]
+        lm_logits = self.decoder.lm_head(hidden_states)
 
-    def extract_features(
-        self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
-    ):
-        self.decoder.extract_features(prev_output_tokens, encoder_out, incremental_state)
+        if incremental_state:
+            self.set_incremental_state(incremental_state, "past", transformer_outputs[1])
+
+        return lm_logits, transformer_outputs[1:]
+
+        # return x, extra
+
+    # def extract_features(
+    #     self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
+    # ):
+    #     self.decoder.extract_features(prev_output_tokens, encoder_out, incremental_state)
 
     def max_positions(self):
         """Maximum output length supported by the decoder."""
-        return self.decoder.max_positions()
+        return self.decoder.config.n_positions - 1
 
     def buffered_future_mask(self, tensor):
         
@@ -442,7 +415,6 @@ class GPTDecoder(FairseqIncrementalDecoder):
 
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
-
 
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
@@ -459,37 +431,5 @@ def Linear(in_features, out_features, bias=True):
         nn.init.constant_(m.bias, 0.0)
     return m
 
-class BART_Tokenizer():
-    def __init__(self, bpe, bart_dictionary,max_len = 512):
-        self.bpe = bpe
-        self.bart_dictionary = bart_dictionary
-        self.max_positions = [max_len]
 
-    def encode(self, sentence, add_special_tokens = True, only_add_eos = True):
-        tokens = self.bpe.encode(sentence)
-        if len(tokens.split(" ")) > min(self.max_positions) - 2:
-            tokens = " ".join(tokens.split(" ")[: min(self.max_positions) - 2])
-        if add_special_tokens:
-            if only_add_eos:
-                bpe_sentence = tokens + " </s>"
-            else:
-                bpe_sentence = "<s> " + tokens + " </s>"
-        else:
-            bpe_sentence = tokens
-        tokens = self.bart_dictionary.encode_line(bpe_sentence, append_eos=False)
-        return tokens.long()
-    
-    def decode(self, tokens:torch.LongTensor):
-        assert tokens.dim() == 1
-        tokens = tokens.cpu().numpy()
-        if tokens[0] == self.bart_dictionary.bos():
-            tokens = tokens[1:]  # remove <s>
-        eos_mask = tokens == self.bart_dictionary.eos()
-        doc_mask = eos_mask[1:] & eos_mask[:-1]
-        sentences = np.split(tokens, doc_mask.nonzero()[0] + 1)
-        sentences = [
-            self.bpe.decode(self.bart_dictionary.string(s)) for s in sentences
-        ]
-        if len(sentences) == 1:
-            return sentences[0]
-        return sentences        
+
