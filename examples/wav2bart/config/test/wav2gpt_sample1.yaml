@@ -6,8 +6,8 @@ common:
   log_interval: 200
 
 checkpoint:
-  save_interval: 10000
-  save_interval_updates: 1000
+  save_interval: 200
+  save_interval_updates: 200
   # save_interval: 100
   # save_interval_updates: 100
   keep_interval_updates: 1
@@ -26,12 +26,11 @@ task:
 
 dataset:
   num_workers: 6
-  max_tokens: 1920000
+  max_tokens: 1200000
   skip_invalid_size_inputs_valid_test: true
-  validate_after_updates: 10000
-  validate_interval: 10000
-  # validate_interval: 200
-  valid_subset: dev_other
+  validate_after_updates: 300
+  validate_interval: 50
+  valid_subset: train_1
   train_subset: train_1
 
 distributed_training:
@@ -42,7 +41,7 @@ criterion:
   _name: cross_entropy_with_acc
 
 optimization:
-  max_update: 100000
+  max_update: 10000
   lr: [0.00002]
   sentence_avg: true
   update_freq: [5]

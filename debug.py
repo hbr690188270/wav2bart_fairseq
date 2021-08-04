@@ -24,9 +24,23 @@ use_cuda = True
 # model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-07-15/05-09-30/checkpoints/checkpoint_best.pt'
 # model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-07-29/12-11-17/checkpoints/checkpoint_last.pt'
 
+# bart v1
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-07-15/05-09-30/checkpoints/checkpoint_best.pt'
+
+# bart v2
+# model_path = '/data/bairu/repos/wav2bart_fairseq/examples/wav2bart/config/outputs/2021-07-31/15-48-35/checkpoints/checkpoint_best.pt'
+
+# bart rand all
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-03/16-35-05/checkpoints/checkpoint_best.pt'
+
 ## gpt2 train 10000
 model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/16-58-36/checkpoints/checkpoint_last.pt'
 
+## gpt2 train1
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/10-35-25/checkpoints/checkpoint_last.pt'
+
+## gpt2 train100
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/10-35-29/checkpoints/checkpoint_last.pt'
 
 models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
     [model_path],
@@ -40,9 +54,9 @@ for model in models:
         model.cuda()
 
 
-task.cfg.eval_wer = False
+task.cfg.eval_wer = True
 saved_cfg.criterion._name = "cross_entropy_with_acc"
-DATASET = 'dev'
+DATASET = 'train_10000'
 
 
 criterion = task.build_criterion(saved_cfg.criterion)
@@ -144,10 +158,27 @@ def validate(task, model, progress):
     print(log_output)
     progress.print(log_output, tag='dev', step=i)
 
+def test_generate(task, model, progress):
+    log_outputs = []
+    total_len = len(progress)
+    for i, sample in enumerate(progress):
+        if i > 10:
+            break
+        sample = utils.move_to_cuda(sample) if use_cuda else sample
+        _loss, _sample_size, log_output = task.valid_step(sample, model, criterion)
+        progress.log(log_output, step=i)
+        log_outputs.append(log_output)
 
+    with metrics.aggregate() as agg:
+        task.reduce_metrics(log_outputs, criterion)
+        log_output = agg.get_smoothed_values()
+
+    print(log_output)
+    progress.print(log_output, tag='dev', step=i)
 
 
 if __name__ == '__main__':
     # check_tgt_dict(task, model)
-    validate(task, model, progress)
+    # validate(task, model, progress)
+    test_generate(task, model, progress)
 

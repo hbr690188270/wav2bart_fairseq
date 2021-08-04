@@ -110,6 +110,20 @@ class CrossEntropyCriterionACC(FairseqCriterion):
         3) logging outputs to display while training
         """
         net_output = model(**sample["net_input"])
+
+        ## debug start
+        # lprobs = model.get_normalized_probs(net_output, log_probs=True)[1]
+        # pred = torch.argmax(lprobs, dim = -1)
+        # print(pred)
+
+        # target = model.get_targets(sample, net_output)[1]
+        # print(target)
+
+        # prev_output_tokens = sample['net_input']['prev_output_tokens'][1]
+        # print(prev_output_tokens)
+
+        ## debug end
+
         loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce)
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else sample["ntokens"]

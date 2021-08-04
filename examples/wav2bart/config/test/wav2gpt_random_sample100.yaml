@@ -6,8 +6,8 @@ common:
   log_interval: 200
 
 checkpoint:
-  save_interval: 10000
-  save_interval_updates: 5000
+  save_interval: 1000
+  save_interval_updates: 1000
   # save_interval: 100
   # save_interval_updates: 100
   keep_interval_updates: 1
@@ -21,7 +21,7 @@ task:
   normalize: false
   labels: ltr
   autoregressive: true
-  eval_wer: false
+  eval_wer: true
   gpt_path: ???
   debug: false
 
@@ -29,9 +29,9 @@ dataset:
   num_workers: 6
   max_tokens: 1200000
   skip_invalid_size_inputs_valid_test: true
-  validate_after_updates: 10000
-  validate_interval: 10000
-  valid_subset: dev_other
+  validate_after_updates: 3000
+  validate_interval: 500
+  valid_subset: train_100
   train_subset: train_100
 
 
