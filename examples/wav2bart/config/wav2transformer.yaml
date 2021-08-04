@@ -15,7 +15,7 @@ checkpoint:
   best_checkpoint_metric: wer
 
 task:
-  _name: asr_finetuning_gpt
+  _name: asr_finetuning_transformer
   data: ???
   normalize: false
   labels: ltr
@@ -58,7 +58,7 @@ lr_scheduler:
   final_lr_scale: 0.05
 
 model:
-  _name: wav2gpt
+  _name: wav2transformer
   w2v_path: ???
   apply_mask: true
   mask_prob: 0.65

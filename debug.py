@@ -21,8 +21,15 @@ use_cuda = True
 # task = ASRFinetunig_v3.setup_task(task_config)
 # model = task.build_model(model_config)
 
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-07-15/05-09-30/checkpoints/checkpoint_best.pt'
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-07-29/12-11-17/checkpoints/checkpoint_last.pt'
+
+## gpt2 train 10000
+model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/16-58-36/checkpoints/checkpoint_last.pt'
+
+
 models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
-    ['/data/bairu/repos/wav2bart_fairseq/outputs/2021-07-15/05-09-30/checkpoints/checkpoint_best.pt'],
+    [model_path],
 )
 model = models[0]
 
@@ -32,12 +39,19 @@ for model in models:
     if use_cuda:
         model.cuda()
 
+
+task.cfg.eval_wer = False
+saved_cfg.criterion._name = "cross_entropy_with_acc"
+DATASET = 'dev'
+
+
 criterion = task.build_criterion(saved_cfg.criterion)
 criterion.eval()
 
 
-task.load_dataset('dev', combine=False, epoch=1, task_cfg=saved_cfg.task)
-dataset = task.dataset('dev')
+
+task.load_dataset(DATASET, combine=False, epoch=1, task_cfg=saved_cfg.task)
+dataset = task.dataset(DATASET)
 
 # Initialize data iterator
 itr = task.get_batch_iterator(
@@ -99,4 +113,41 @@ def debug_attention(task, model, progress,):
     with open("decode_res.pkl",'wb') as f:
         pickle.dump(decode_res, f)
 
+
+def check_tgt_dict(task, model):
+    tgt_dict = task.target_dictionary
+    # print(tgt_dict.indices)
+    print(len(tgt_dict.indices))
+    print(model.decoder.decoder.embed_tokens.weight.size())
+    bpe = task.bart.bpe
+    print(bpe.bpe.encoder)
+    print(len(bpe.bpe.encoder))
+    # print(bpe.bpe.bype_encoder)
+
+
+def validate(task, model, progress):
+    log_outputs = []
+    total_len = len(progress)
+    for i, sample in enumerate(progress):
+        # if i > 200:
+            # break
+        print(i,"/", total_len)
+        sample = utils.move_to_cuda(sample) if use_cuda else sample
+        _loss, _sample_size, log_output = task.valid_step(sample, model, criterion)
+        progress.log(log_output, step=i)
+        log_outputs.append(log_output)
+
+    with metrics.aggregate() as agg:
+        task.reduce_metrics(log_outputs, criterion)
+        log_output = agg.get_smoothed_values()
+
+    print(log_output)
+    progress.print(log_output, tag='dev', step=i)
+
+
+
+
+if __name__ == '__main__':
+    # check_tgt_dict(task, model)
+    validate(task, model, progress)
 

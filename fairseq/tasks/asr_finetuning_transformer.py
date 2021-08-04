@@ -115,8 +115,8 @@ class ASRFinetuningConfig(FairseqDataclass):
         metadata={"help": "path of bart model"},
     )
 
-@register_task("asr_finetuning_gpt", dataclass=ASRFinetuningConfig)
-class ASRFinetunig_gpt(FairseqTask):
+@register_task("asr_finetuning_transformer", dataclass=ASRFinetuningConfig)
+class ASRFinetunig_Transformer(FairseqTask):
     def __init__(
         self,
         cfg: ASRFinetuningConfig,
@@ -124,7 +124,6 @@ class ASRFinetunig_gpt(FairseqTask):
         super().__init__(cfg)
         if cfg.eval_wer:
             assert cfg.labels is not None, "eval_wer can only be set during fine-tuning"
-        self.blank_symbol = "<s>"
         print(cfg)
         print(cfg.gpt_path)
         

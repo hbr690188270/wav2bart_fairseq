@@ -150,8 +150,8 @@ class Wav2GPTConfig(FairseqDataclass):
     fix_encoder: bool = False
     fix_decoder: bool = False
 
-@register_model("wav2gpt", dataclass=Wav2GPTConfig)
-class Wav2GPT(FairseqEncoderDecoderModel):
+@register_model("wav2gpt_random", dataclass=Wav2GPTConfig)
+class Wav2GPT_Random(FairseqEncoderDecoderModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
 
@@ -162,7 +162,7 @@ class Wav2GPT(FairseqEncoderDecoderModel):
         assert cfg.autoregressive, "Please set task.autoregressive=true for seq2seq asr models"
         encoder = cls.load_wav2vec_encoder(cfg)
         decoder = cls.load_gpt_decoder(cfg)
-        model = Wav2GPT(encoder, decoder)
+        model = Wav2GPT_Random(encoder, decoder)
         return model
 
     def set_num_updates(self, num_updates):
@@ -187,7 +187,7 @@ class Wav2GPT(FairseqEncoderDecoderModel):
         '''
         return: fairseq.models.TransformerDecoder
         '''
-        decoder = GPTDecoder(cfg)
+        decoder = GPTDecoder(cfg, pre_train = False)
         if cfg.fix_decoder:
             for n, parameter in decoder.named_parameters():
                 if 'decoder.embed_positions' in n or 'decoder.embed_tokens' in n:

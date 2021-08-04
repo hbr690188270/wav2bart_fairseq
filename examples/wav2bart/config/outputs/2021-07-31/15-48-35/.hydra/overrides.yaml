@@ -1,0 +1,4 @@
+- task.data=/data/bairu/audio_dataset/LibriSpeech/processed_file/
+- model.w2v_path=/data/bairu/model_cache/wav2vec_model/wav2vec_small.pt
+- model.bart_path=/data/bairu/model_cache/bart_model/bart.base/
+- task.bart_path=/data/bairu/model_cache/bart_model/bart.base/

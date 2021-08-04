@@ -6,8 +6,8 @@ common:
   log_interval: 200
 
 checkpoint:
-  save_interval: 1000
-  save_interval_updates: 500
+  save_interval: 20000
+  save_interval_updates: 20000
   # save_interval: 100
   # save_interval_updates: 100
   keep_interval_updates: 1
@@ -26,17 +26,17 @@ task:
 
 dataset:
   num_workers: 6
-  max_tokens: 1280000
+  max_tokens: 1200000
   skip_invalid_size_inputs_valid_test: true
-  validate_after_updates: 10000
-  validate_interval: 1000
+  validate_after_updates: 20000
+  validate_interval: 20000
   # validate_interval: 200
   valid_subset: dev_other
-  # valid_subset: train_dev
+  train_subset: train_2000
 
 distributed_training:
   ddp_backend: legacy_ddp
-  distributed_world_size: 2
+  distributed_world_size: 1
 
 criterion:
   _name: cross_entropy_with_acc

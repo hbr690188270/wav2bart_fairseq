@@ -1,4 +1,3 @@
-from fairseq.models.fairseq_decoder import FairseqDecoder
 from json import encoder
 import pickle
 import contextlib
@@ -6,6 +5,9 @@ from numpy.core.fromnumeric import argsort
 import torch
 import torch.nn as nn
 from torch.nn.modules import padding
+from fairseq.models import lstm, transformer
+from fairseq.models.bart import BARTModel, BARTHubInterface
+from fairseq.models.wav2vec.wav2vec2 import Wav2Vec2Model
 from fairseq import hub_utils, file_utils,checkpoint_utils
 from fairseq.dataclass.utils import (
     convert_namespace_to_omegaconf,
@@ -38,10 +40,9 @@ from fairseq import checkpoint_utils, tasks, utils
 import os
 from fairseq.models.transformer import TransformerDecoder
 
-from transformers import GPT2Tokenizer, GPT2LMHeadModel, GPT2Config
 
 @dataclass
-class Wav2GPTConfig(FairseqDataclass):
+class Wav2BartConfig(FairseqDataclass):
     w2v_path: str = field(
         default=MISSING, metadata={"help": "path to wav2vec 2.0 model"}
     )
@@ -138,36 +139,30 @@ class Wav2GPTConfig(FairseqDataclass):
 
     autoregressive: bool = II("task.autoregressive")
 
-    gpt_path: str = field(
+    bart_path: str = field(
         default="",
-        metadata={"help": "path of bart model"},
-    )
-    gpt_type: str = field(
-        default="gpt2",
         metadata={"help": "path of bart model"},
     )
 
     fix_encoder: bool = False
     fix_decoder: bool = False
 
-@register_model("wav2gpt", dataclass=Wav2GPTConfig)
-class Wav2GPT(FairseqEncoderDecoderModel):
+@register_model("wav2bart_random", dataclass=Wav2BartConfig)
+class Wav2Bart_Random(FairseqEncoderDecoderModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
 
     @classmethod
-    def build_model(cls, cfg:Wav2GPTConfig, task: FairseqTask):
+    def build_model(cls, cfg:Wav2BartConfig, task: FairseqTask):
         """Build a new model instance."""
 
         assert cfg.autoregressive, "Please set task.autoregressive=true for seq2seq asr models"
         encoder = cls.load_wav2vec_encoder(cfg)
-        decoder = cls.load_gpt_decoder(cfg)
-        model = Wav2GPT(encoder, decoder)
+        decoder = cls.load_bart_decoder(cfg)
+        model = Wav2Bart_Random(encoder, decoder)
         return model
 
     def set_num_updates(self, num_updates):
-        # self.wav2vec_encoder.set_num_updates(num_updates)
-        # self.bart_decoder.set_num_updates(num_updates)
         for m in self.modules():
             if hasattr(m, "set_num_updates") and m != self:
                 m.set_num_updates(num_updates)
@@ -183,11 +178,11 @@ class Wav2GPT(FairseqEncoderDecoderModel):
         return model
    
     @classmethod
-    def load_gpt_decoder(cls, cfg):
+    def load_bart_decoder(cls, cfg):
         '''
         return: fairseq.models.TransformerDecoder
         '''
-        decoder = GPTDecoder(cfg)
+        decoder = BartDecoder(cfg)
         if cfg.fix_decoder:
             for n, parameter in decoder.named_parameters():
                 if 'decoder.embed_positions' in n or 'decoder.embed_tokens' in n:
@@ -209,14 +204,14 @@ class Wav2GPT(FairseqEncoderDecoderModel):
         return self.decoder.max_positions()
 
     def forward(self, **kwargs):
-        encoder_out = self.encoder(tbc=False, **kwargs)
+        encoder_out = self.encoder(tbc=True, **kwargs)
         # decoder_out = self.decoder(encoder_out=encoder_out, prev_output_tokens = kwargs['prev_output_tokens'])
         decoder_out = self.decoder(encoder_out=encoder_out, **kwargs)
         return decoder_out
 
 
 class Wav2VecEncoder(FairseqEncoder):
-    def __init__(self, cfg: Wav2GPTConfig, tgt_dict=None):
+    def __init__(self, cfg: Wav2BartConfig, tgt_dict=None):
         self.apply_mask = cfg.apply_mask
 
         arg_overrides = {
@@ -286,7 +281,8 @@ class Wav2VecEncoder(FairseqEncoder):
         super().set_num_updates(num_updates)
         self.num_updates = num_updates
 
-    def forward(self, source, padding_mask, tbc=False, **kwargs):
+    def forward(self, source, padding_mask, tbc=True, **kwargs):
+
         w2v_args = {
             "source": source,
             "padding_mask": padding_mask,
@@ -311,10 +307,9 @@ class Wav2VecEncoder(FairseqEncoder):
         }
 
     def reorder_encoder_out(self, encoder_out, new_order):
-        ## since the shape is BTC, the index_select operation should be on the 0 dimension
         if encoder_out["encoder_out"] is not None:
             encoder_out["encoder_out"] = [encoder_out["encoder_out"][0].index_select(
-                0, new_order
+                1, new_order
             )]
         if encoder_out["encoder_padding_mask"] is not None:
             encoder_out["encoder_padding_mask"] = [encoder_out[
@@ -329,31 +324,40 @@ class Wav2VecEncoder(FairseqEncoder):
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
 
+class BartDecoder(FairseqIncrementalDecoder):
+    """
+    Transformer decoder consisting of *args.decoder_layers* layers. Each layer
+    is a :class:`TransformerDecoderLayer`.
 
-class GPTDecoder(FairseqIncrementalDecoder):
-    def __init__(self, cfg: Wav2GPTConfig, dictionary = None, pre_train = True):
+    Args:
+        args (argparse.Namespace): parsed command-line arguments
+        dictionary (~fairseq.data.Dictionary): decoding dictionary
+        embed_tokens (torch.nn.Embedding): output embedding
+        no_encoder_attn (bool, optional): whether to attend to encoder outputs
+            (default: False).
+    """
+
+    def __init__(
+        self,
+        cfg: Wav2BartConfig,
+        dictionary=None,
+        embed_tokens=None,
+        no_encoder_attn=False,
+    ):
         super().__init__(dictionary)
-        gpt_path = cfg.gpt_path
-        gpt_type = cfg.gpt_type
-
-        config = GPT2Config.from_pretrained(gpt_type, cache_dir = gpt_path)
-        config.add_cross_attention = True
-        gpt_lm = GPT2LMHeadModel(config)
-        if pre_train:
-            orig_gpt_model = GPT2LMHeadModel.from_pretrained(gpt_type, cache_dir = gpt_path)
-            # for name, param in orig_gpt_model.name_parameters():
-            #     gpt_lm_param = gpt_lm.get_parameter(name)
-            #     gpt_lm_param = param
-
-            refer_state_dict = orig_gpt_model.state_dict()
-            missing_keys, unexpected_keys = gpt_lm.load_state_dict(refer_state_dict, strict = False)
-            print(missing_keys)
-            print(unexpected_keys)
-        self.decoder = gpt_lm
-
-        ## mannually controled, defined in asr_finetuning_gpt2.py
-        self.pad_idx = 2
-
+        self.cfg = cfg
+        # bart = torch.hub.load('pytorch/fairseq', 'bart.base')
+        from fairseq.models.bart import BARTModel
+        if os.path.isfile(os.path.join(cfg.bart_path, 'model.pt')):
+            print('loading bart from cfg path')
+            bart = BARTModel.from_pretrained(cfg.bart_path, checkpoint_file='model.pt')
+        else:
+            print('loading bart from relative path')
+            bart = BARTModel.from_pretrained('models/bart.base', checkpoint_file='model.pt')
+        
+        bart_decoder = bart.model.decoder
+        self.decoder = TransformerDecoder(bart_decoder.args, bart_decoder.dictionary, bart_decoder.embed_tokens)
+        # self.decoder.load_state_dict(bart_decoder.state_dict())
 
     def forward(
         self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
@@ -373,53 +377,18 @@ class GPTDecoder(FairseqIncrementalDecoder):
                 - a dictionary with any model-specific outputs
         """
         # with torch.no_grad() if self.cfg.fix_decoder else contextlib.ExitStack():
-        if incremental_state:
-            past = self.get_incremental_state("past")
-        else:
-            past = None
+        x, extra = self.decoder(prev_output_tokens, encoder_out, incremental_state)
 
-        ## do not use incremental state temporarily
-        # past = None
-        
-        attention_mask = prev_output_tokens.ne(self.pad_idx).int()
-        position_ids = attention_mask * (
-            torch.arange(1, 1 + prev_output_tokens.size(1))
-            .to(prev_output_tokens)
-            .repeat(prev_output_tokens.size(0), 1)
-        )
+        return x, extra
 
-        encoder_hidden_states = encoder_out['encoder_out'][0].contiguous()
-        encoder_attention_mask = encoder_out['encoder_padding_mask'][0]
-        transformer_outputs = self.decoder.transformer(
-                                 input_ids = prev_output_tokens, 
-                                 attention_mask = attention_mask,
-                                 encoder_hidden_states = encoder_hidden_states, 
-                                 encoder_attention_mask = encoder_attention_mask, 
-                                 position_ids=position_ids,
-                                 past_key_values = past
-                                 )
-        hidden_states = transformer_outputs[0]
-        lm_logits = self.decoder.lm_head(hidden_states)
-
-        if incremental_state:
-            self.set_incremental_state(incremental_state, "past", transformer_outputs[1])
-
-        return lm_logits, {
-                                "tuple":transformer_outputs[1:],
-                                "attn": None,
-                                "hidden states":transformer_outputs[0],           
-                            }
-
-        # return x, extra
-
-    # def extract_features(
-    #     self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
-    # ):
-    #     self.decoder.extract_features(prev_output_tokens, encoder_out, incremental_state)
+    def extract_features(
+        self, prev_output_tokens, encoder_out=None, incremental_state=None, **unused
+    ):
+        self.decoder.extract_features(prev_output_tokens, encoder_out, incremental_state)
 
     def max_positions(self):
         """Maximum output length supported by the decoder."""
-        return self.decoder.config.n_positions - 1
+        return self.decoder.max_positions()
 
     def buffered_future_mask(self, tensor):
         
@@ -427,6 +396,7 @@ class GPTDecoder(FairseqIncrementalDecoder):
 
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
+
 
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
@@ -443,5 +413,37 @@ def Linear(in_features, out_features, bias=True):
         nn.init.constant_(m.bias, 0.0)
     return m
 
+class BART_Tokenizer():
+    def __init__(self, bpe, bart_dictionary,max_len = 512):
+        self.bpe = bpe
+        self.bart_dictionary = bart_dictionary
+        self.max_positions = [max_len]
 
-
+    def encode(self, sentence, add_special_tokens = True, only_add_eos = True):
+        tokens = self.bpe.encode(sentence)
+        if len(tokens.split(" ")) > min(self.max_positions) - 2:
+            tokens = " ".join(tokens.split(" ")[: min(self.max_positions) - 2])
+        if add_special_tokens:
+            if only_add_eos:
+                bpe_sentence = tokens + " </s>"
+            else:
+                bpe_sentence = "<s> " + tokens + " </s>"
+        else:
+            bpe_sentence = tokens
+        tokens = self.bart_dictionary.encode_line(bpe_sentence, append_eos=False)
+        return tokens.long()
+    
+    def decode(self, tokens:torch.LongTensor):
+        assert tokens.dim() == 1
+        tokens = tokens.cpu().numpy()
+        if tokens[0] == self.bart_dictionary.bos():
+            tokens = tokens[1:]  # remove <s>
+        eos_mask = tokens == self.bart_dictionary.eos()
+        doc_mask = eos_mask[1:] & eos_mask[:-1]
+        sentences = np.split(tokens, doc_mask.nonzero()[0] + 1)
+        sentences = [
+            self.bpe.decode(self.bart_dictionary.string(s)) for s in sentences
+        ]
+        if len(sentences) == 1:
+            return sentences[0]
+        return sentences        
