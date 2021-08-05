@@ -115,8 +115,8 @@ class ASRFinetuningPrefixConfig(FairseqDataclass):
         metadata={"help": "path of bart model"},
     )
 
-@register_task("asr_finetuning_gpt", dataclass=ASRFinetuningPrefixConfig)
-class ASRFinetunig_gpt(FairseqTask):
+@register_task("asr_finetuning_prefix", dataclass=ASRFinetuningPrefixConfig)
+class ASRFinetunig_Prefix(FairseqTask):
     def __init__(
         self,
         cfg: ASRFinetuningPrefixConfig,

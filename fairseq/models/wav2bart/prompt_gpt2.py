@@ -40,6 +40,8 @@ from fairseq.models.wav2vec.wav2vec2 import MASKING_DISTRIBUTION_CHOICES
 
 from transformers import GPT2Tokenizer, GPT2LMHeadModel, GPT2Config
 
+import torchsnooper
+
 DEFAULT_MAX_TARGET_POSITIONS = 1024
 
 @dataclass
@@ -234,18 +236,21 @@ class PromptGPT(FairseqLanguageModel):
     def max_decoder_positions(self):
         """Maximum output length supported by the decoder."""
         return self.decoder.max_positions()
-
+    
+    # @torchsnooper.snoop()
     def forward(self, **kwargs):
         encoder_out = self.encoder(tbc=False, **kwargs)
         # decoder_out = self.decoder(encoder_out=encoder_out, prev_output_tokens = kwargs['prev_output_tokens'])
         
         encoder_hidden_states = encoder_out['encoder_out'][0]
-        pooling_output = torch.mean(encoder_hidden_states, dim = -1)
-        batch_size, hidden_dim = pooling_output.size()
+        pooling_output = torch.mean(encoder_hidden_states, dim = 1)
+        # batch_size, hidden_dim = pooling_output.size()
         prefix = self.linear_layer(pooling_output)
-        prefix_list = torch.split(prefix, self.prefix_num, dim = 1)
-
-        decoder_out = self.decoder(encoder_out=encoder_out, **kwargs)
+        batch_size, hidden_dim = prefix.size()
+        prefix = prefix.view(batch_size, -1, hidden_dim)
+        prefix_list = torch.split(prefix, hidden_dim // self.prefix_num, dim = 2)
+        prefix_tensor = torch.cat(prefix_list, dim = 1)
+        decoder_out = self.decoder(prefix_tensor = prefix_tensor, **kwargs)
         return decoder_out
 
 
@@ -409,8 +414,8 @@ class GPTDecoder(FairseqIncrementalDecoder):
         """
         # with torch.no_grad() if self.cfg.fix_decoder else contextlib.ExitStack():        
         attention_mask = prev_output_tokens.ne(self.pad_idx).int()
-        prefix_attention_mask = torch.ones_like(prefix_tensor[:2]).int()
-        attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim = 0)
+        prefix_attention_mask = torch.ones(prefix_tensor.size(0), prefix_tensor.size(1)).int().to(attention_mask.device)
+        attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim = 1)
         position_ids = attention_mask * (
             torch.arange(1, 1 + prev_output_tokens.size(1) + prefix_tensor.size(1))
             .to(prev_output_tokens)
@@ -425,6 +430,7 @@ class GPTDecoder(FairseqIncrementalDecoder):
                                  )
         hidden_states = transformer_outputs[0]
         lm_logits = self.decoder.lm_head(hidden_states)[:, prefix_tensor.size(1):,:]
+        # lm_logits = self.decoder.lm_head(hidden_states)
 
         return lm_logits, {
                                 "tuple":transformer_outputs[1:],
@@ -445,8 +451,8 @@ class GPTDecoder(FairseqIncrementalDecoder):
 
 from transformers import GPT2LMHeadModel, GPT2Model
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
-import logging
-logger = logging.get_logger(__name__)
+# import logging
+# logger = logging.get_logger(__name__)
 
 class GPT2ModelwithPrefix(GPT2Model):
     def forward(
@@ -485,10 +491,15 @@ class GPT2ModelwithPrefix(GPT2Model):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
+
+        ## modify input shape
+        # input_shape[1] = input_shape[1] + prefix_tensor.size(1)
+        input_shape = attention_mask.size()
+
         if token_type_ids is not None:
-            token_type_ids = token_type_ids.view(-1, input_shape[-1] + prefix_tensor.size(1))
+            token_type_ids = token_type_ids.view(-1, input_shape[-1])
         if position_ids is not None:
-            position_ids = position_ids.view(-1, input_shape[-1] + prefix_tensor.size(1))
+            position_ids = position_ids.view(-1, input_shape[-1])
 
         if past_key_values is None:
             past_length = 0
@@ -497,8 +508,8 @@ class GPT2ModelwithPrefix(GPT2Model):
             past_length = past_key_values[0][0].size(-2)
         if position_ids is None:
             device = input_ids.device if input_ids is not None else inputs_embeds.device
-            position_ids = torch.arange(past_length, input_shape[-1] + past_length + prefix_tensor.size(1), dtype=torch.long, device=device)
-            position_ids = position_ids.unsqueeze(0).view(-1, input_shape[-1] + prefix_tensor.size(1))
+            position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0).view(-1, input_shape[-1])
 
         # Attention mask.
         if attention_mask is not None:
@@ -540,7 +551,7 @@ class GPT2ModelwithPrefix(GPT2Model):
             inputs_embeds = self.wte(input_ids)
         
         ## concat with prefix
-        inputs_embeds = torch.cat([prefix_tensor, inputs_embeds], dim = 0)
+        inputs_embeds = torch.cat([prefix_tensor, inputs_embeds], dim = 1)
 
         position_embeds = self.wpe(position_ids)
         hidden_states = inputs_embeds + position_embeds
@@ -576,10 +587,6 @@ class GPT2ModelwithPrefix(GPT2Model):
             if getattr(self.config, "gradient_checkpointing", False) and self.training:
 
                 if use_cache:
-                    logger.warn(
-                        "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-                        "`use_cache=False`..."
-                    )
                     use_cache = False
 
                 def create_custom_forward(module):
@@ -651,7 +658,6 @@ class GPT2LMModelwithPrefix(GPT2LMHeadModel):
         super().__init__(config)
         self.transformer = GPT2ModelwithPrefix(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-
         self.init_weights()
 
         # Model parallel

@@ -111,7 +111,9 @@ class CrossEntropyCriterionACC(FairseqCriterion):
         """
         net_output = model(**sample["net_input"])
 
-        ## debug start
+        # debug start
+        # lprobs = model.get_normalized_probs(net_output, log_probs=True)
+        # print()
         # lprobs = model.get_normalized_probs(net_output, log_probs=True)[1]
         # pred = torch.argmax(lprobs, dim = -1)
         # print(pred)
@@ -121,8 +123,8 @@ class CrossEntropyCriterionACC(FairseqCriterion):
 
         # prev_output_tokens = sample['net_input']['prev_output_tokens'][1]
         # print(prev_output_tokens)
-
-        ## debug end
+        # print()
+        # debug end
 
         loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce)
         sample_size = (

@@ -40,7 +40,12 @@ model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/16-58-36/che
 # model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/10-35-25/checkpoints/checkpoint_last.pt'
 
 ## gpt2 train100
-# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-01/10-35-29/checkpoints/checkpoint_last.pt'
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-04/14-40-19/checkpoints/checkpoint_last.pt'
+
+## gpt2 random train100
+# model_path = '/data/bairu/repos/wav2bart_fairseq/outputs/2021-08-04/15-34-23/checkpoints/checkpoint_last.pt'
+
+
 
 models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
     [model_path],
@@ -54,7 +59,7 @@ for model in models:
         model.cuda()
 
 
-task.cfg.eval_wer = True
+task.cfg.eval_wer = False
 saved_cfg.criterion._name = "cross_entropy_with_acc"
 DATASET = 'train_10000'
 
